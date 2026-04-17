@@ -385,24 +385,24 @@ class WikiStreamServiceTest {
         // ── 5. Emitter send error triggers completeWithError + removal ─────────
 
         @Test
-        @DisplayName("removed from emitter map after send throws an exception")
-        void sendException_emitterRemovedAndPauseReturnsFalse() throws Exception {
+        @DisplayName("when send fails, subscriber context is no longer reported as paused")
+        void sendFailure_subscriberNoLongerPaused() throws Exception {
             subscribeUser(principal, testUser);
 
             RecentChange rc = buildRecentChange();
             ObjectNode node = new ObjectMapper().createObjectNode();
             when(mapper.valueToTree(rc)).thenReturn(node);
             when(mapper.writeValueAsString(any())).thenReturn("{\"flagged\":true}");
-            // Make abuseFilter return true so we actually try to send
+            // Make abuseFilter return true so we actually try to send.
             when(abuseFilter.matches(eq(rc), eq(testUser))).thenReturn(java.util.List.of("Test Filter"));
 
-            // After a send error the emitter is removed; the paused state for that user
-            // will return false because there is no longer a StreamContext for them.
             invokeBroadcastAsync(rc);
 
-            // The emitter threw during send (SseEmitter is already completed here);
-            // subsequent isPaused should cleanly return false rather than NPE.
-            assertDoesNotThrow(() -> wikiStreamService.isPaused(principal));
+            // Ensure matching path was evaluated (send path is reached for this subscriber).
+            verify(abuseFilter, times(1)).matches(eq(rc), eq(testUser));
+
+            // After failed/terminated send handling, no paused context should remain for user.
+            assertFalse(wikiStreamService.isPaused(principal));
         }
 
         // ── 6. Multi-user isolation ────────────────────────────────────────────
