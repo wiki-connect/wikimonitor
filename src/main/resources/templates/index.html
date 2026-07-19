@@ -45,7 +45,12 @@
                 <div class="d-flex gap-2 ms-3 me-auto" id="diffActions"></div>
 
                 <!-- Global Controls (Toolbar) -->
-                <div class="global-controls d-flex gap-2">
+                <div class="global-controls d-flex gap-2 align-items-center">
+                    <div class="connection-status is-disconnected" id="connectionStatus" role="status"
+                        aria-live="polite" title="Connecting…" aria-label="Connection status: Connecting…">
+                        <span class="connection-status-dot"></span>
+                        <span class="connection-status-label d-none d-sm-inline">Connecting…</span>
+                    </div>
                     <button class="btn btn-sm btn-outline-secondary d-md-none" id="mobileMenuBtn">
                         <i class="bi bi-list"></i>
                     </button>

@@ -55,6 +55,7 @@ public class WikiStreamService {
     private final RedisCache redisCache;
 
     private final long sseTimeoutMs;
+    private final long heartbeatMs;
     private final int eventCacheMaxSize;
     private final String eventCacheKey;
 
@@ -65,12 +66,14 @@ public class WikiStreamService {
 
     private volatile String lastEventId;
     private volatile boolean shuttingDown = false;
+    private volatile boolean heartbeatScheduled = false;
 
     public WikiStreamService(ObjectMapper mapper,
                              AbuseFilterService abuseFilter,
                              UserService userService,
                              RedisCache redisCache,
                              @Value("${sse.timeout.ms:1800000}") long sseTimeoutMs,
+                             @Value("${sse.heartbeat.ms:15000}") long heartbeatMs,
                              @Value("${sse.event-cache.max-size:1000}") int eventCacheMaxSize,
                              @Value("${sse.redis.key-prefix:wikimonitor}") String redisKeyPrefix) {
         this.mapper = mapper;
@@ -78,6 +81,7 @@ public class WikiStreamService {
         this.userService = userService;
         this.redisCache = redisCache;
         this.sseTimeoutMs = sseTimeoutMs;
+        this.heartbeatMs = heartbeatMs;
         this.eventCacheMaxSize = eventCacheMaxSize;
         this.eventCacheKey = redisKeyPrefix + EVENT_CACHE_KEY_SUFFIX;
         this.client = new OkHttpClient.Builder()
@@ -94,6 +98,7 @@ public class WikiStreamService {
         if (shuttingDown) {
             return;
         }
+        ensureHeartbeatScheduled();
         if (eventSource != null) {
             eventSource.cancel();
         }
@@ -171,6 +176,49 @@ public class WikiStreamService {
             scheduler.schedule(this::startStream, 5, TimeUnit.SECONDS);
         } catch (RejectedExecutionException e) {
             log.debug("Scheduler rejected task, likely shutting down.");
+        }
+    }
+
+    /** Schedules the recurring heartbeat once; startStream() re-runs on every reconnect. */
+    private synchronized void ensureHeartbeatScheduled() {
+        if (heartbeatScheduled || shuttingDown || scheduler.isShutdown()) {
+            return;
+        }
+        try {
+            scheduler.scheduleAtFixedRate(this::sendHeartbeats, heartbeatMs, heartbeatMs, TimeUnit.MILLISECONDS);
+            heartbeatScheduled = true;
+        } catch (RejectedExecutionException e) {
+            log.debug("Scheduler rejected heartbeat task, likely shutting down.");
+        }
+    }
+
+    /** Keepalive ping to every client: keeps proxies open, signals liveness, and reaps dead emitters. */
+    private void sendHeartbeats() {
+        if (shuttingDown || emitters.isEmpty()) {
+            return;
+        }
+        emitters.forEach((emitter, context) -> {
+            try {
+                executor.execute(() -> sendHeartbeat(emitter));
+            } catch (RejectedExecutionException ignored) {
+            }
+        });
+    }
+
+    private void sendHeartbeat(SseEmitter emitter) {
+        if (shuttingDown) {
+            return;
+        }
+        try {
+            // Named event (not onmessage data); payload advertises the interval so the client can size its timeout.
+            emitter.send(SseEmitter.event().name("heartbeat").data(String.valueOf(heartbeatMs)));
+        } catch (Exception e) {
+            // Client is gone; stop tracking it.
+            emitters.remove(emitter);
+            try {
+                emitter.complete();
+            } catch (Exception ignored) {
+            }
         }
     }
 
@@ -276,6 +324,9 @@ public class WikiStreamService {
         emitters.put(emitter, context);
         log.info("Client subscribed: {}{}", user.getUsername(),
                 shouldReplay ? " (resuming from " + clientLastEventId + ")" : "");
+
+        // Immediate ping so the client turns "connected" without waiting for the first edit or heartbeat tick.
+        sendHeartbeat(emitter);
 
         if (shouldReplay) {
             try {

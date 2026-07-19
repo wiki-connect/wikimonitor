@@ -26,6 +26,40 @@ document.addEventListener('DOMContentLoaded', () => {
     const MIN_RETRY_DELAY_MS = 3000;
     const MAX_RETRY_DELAY_MS = 60000;
 
+    // --- Connection health ---
+    let lastActivityAt = 0;
+    let staleTimeoutMs = 45000;
+    const HEALTH_CHECK_MS = 1000;
+
+    function setConnected(connected) {
+        if (!connectionStatus) return;
+        connectionStatus.classList.toggle('is-connected', connected);
+        connectionStatus.classList.toggle('is-disconnected', !connected);
+        const label = connected ? 'Live' : 'Disconnected';
+        connectionStatus.title = label;
+        connectionStatus.setAttribute('aria-label', 'Connection status: ' + label);
+        const labelEl = connectionStatus.querySelector('.connection-status-label');
+        if (labelEl) labelEl.textContent = label;
+    }
+
+    function markAlive(intervalMs) {
+        lastActivityAt = Date.now();
+        if (intervalMs > 0) staleTimeoutMs = Math.max(intervalMs * 3, 20000);
+        setConnected(true);
+    }
+
+    function reconnect() {
+        if (eventSource) {
+            try { eventSource.close(); } catch (e) { /* ignore */ }
+            eventSource = null;
+        }
+        setConnected(false);
+        lastActivityAt = Date.now(); // give the fresh connection a full window
+        const delay = retryDelayMs + Math.random() * (retryDelayMs / 2);
+        setTimeout(connect, delay);
+        retryDelayMs = Math.min(retryDelayMs * 2, MAX_RETRY_DELAY_MS);
+    }
+
     function isTypingTarget(target) {
         if (!target) return false;
         const tag = target.tagName;
@@ -105,29 +139,41 @@ document.addEventListener('DOMContentLoaded', () => {
         eventSource = new EventSource('/stream');
 
         eventSource.onopen = () => {
-            if (connectionStatus) connectionStatus.classList.add('connected');
-            retryDelayMs = MIN_RETRY_DELAY_MS; //reset value back to MIN_RETRY_DELAY_MS for successful re-connection
+            markAlive();
+            retryDelayMs = MIN_RETRY_DELAY_MS; // reset backoff after a good connection
         };
 
         eventSource.onmessage = (event) => {
-            if (connectionStatus) connectionStatus.classList.add('connected');
-            const data = JSON.parse(event.data);
-            addEventToQueue(data);
+            markAlive();
+            addEventToQueue(JSON.parse(event.data));
         };
+
+        // Keepalive ping: proves the stream is live even when no edits match, and
+        // advertises the server's heartbeat interval so we can size the timeout.
+        eventSource.addEventListener('heartbeat', (event) => {
+            markAlive(parseInt(event.data, 10) || 0);
+        });
 
         eventSource.onerror = (err) => {
             console.error('EventSource failed:', err);
-            if (connectionStatus) connectionStatus.classList.remove('connected');
-            // Browser auto-reconnects with Last-Event-ID; only retry manually if it gave up.
+            setConnected(false);
+            // Browser auto-reconnects on its own (readyState CONNECTING); only step
+            // in when it has given up.
             if (eventSource && eventSource.readyState === EventSource.CLOSED) {
-                eventSource = null;
-                const jitter = Math.random() * (retryDelayMs / 2);
-                const delay = retryDelayMs + jitter;
-                setTimeout(connect, delay);
-                retryDelayMs = Math.min(retryDelayMs * 2, MAX_RETRY_DELAY_MS);
+                reconnect();
             }
         };
     }
+
+    // The once-per-second health check: a silent hang produces no onerror, so if
+    // the stream has gone quiet past the stale threshold, treat it as dead.
+    setInterval(() => {
+        if (!eventSource || !lastActivityAt) return;
+        if (Date.now() - lastActivityAt > staleTimeoutMs) {
+            console.warn(`SSE stale: no data/heartbeat in ${staleTimeoutMs}ms, reconnecting`);
+            reconnect();
+        }
+    }, HEALTH_CHECK_MS);
 
     function addEventToQueue(event) {
         if (!event.flagged) return; // Only show flagged items based on previous logic

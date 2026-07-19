@@ -17,6 +17,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.security.Principal;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -60,7 +61,7 @@ class WikiStreamServiceTest {
         MockitoAnnotations.openMocks(this);
         wikiStreamService = new WikiStreamService(
                 mapper, abuseFilter, userService, redisCache,
-                1_800_000L, 1000, "wikimonitor-test");
+                1_800_000L, 15_000L, 1000, "wikimonitor-test");
 
         testUser = new User();
         testUser.setId(1L);
@@ -504,6 +505,57 @@ class WikiStreamServiceTest {
             cacheEvent.invoke(wikiStreamService, "evt-after-shutdown", rc);
 
             verify(redisCache, never()).appendToList(anyString(), any(), anyInt());
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // heartbeat — keepalive and dead-emitter reaping
+    // ══════════════════════════════════════════════════════════════════════════
+    @Nested
+    @DisplayName("heartbeat")
+    class Heartbeat {
+
+        @SuppressWarnings("unchecked")
+        private Map<SseEmitter, Object> emitters() throws Exception {
+            Field f = WikiStreamService.class.getDeclaredField("emitters");
+            f.setAccessible(true);
+            return (Map<SseEmitter, Object>) f.get(wikiStreamService);
+        }
+
+        private void invokeSendHeartbeat(SseEmitter emitter) throws Exception {
+            Method m = WikiStreamService.class.getDeclaredMethod("sendHeartbeat", SseEmitter.class);
+            m.setAccessible(true);
+            m.invoke(wikiStreamService, emitter);
+        }
+
+        @Test
+        @DisplayName("a healthy emitter remains registered after a heartbeat")
+        void healthyEmitter_staysRegistered() throws Exception {
+            when(principal.getName()).thenReturn("alice");
+            when(userService.loadUserByUsername("alice")).thenReturn(testUser);
+
+            // subscribe() already fires one immediate heartbeat; a fresh SseEmitter
+            // buffers sends without a response, so it must survive.
+            SseEmitter emitter = wikiStreamService.subscribe(principal);
+            assertTrue(emitters().containsKey(emitter), "emitter should be registered after subscribe");
+
+            invokeSendHeartbeat(emitter);
+
+            assertTrue(emitters().containsKey(emitter), "healthy emitter must remain registered");
+        }
+
+        @Test
+        @DisplayName("a dead emitter is reaped when its heartbeat send fails")
+        void deadEmitter_isReaped() throws Exception {
+            // A completed emitter throws on any subsequent send, standing in for a
+            // client whose socket has gone away.
+            SseEmitter dead = new SseEmitter();
+            dead.complete();
+            emitters().put(dead, new Object());
+
+            invokeSendHeartbeat(dead);
+
+            assertFalse(emitters().containsKey(dead), "dead emitter must be removed after a failed heartbeat");
         }
     }
 }
