@@ -137,7 +137,7 @@ The application uses `src/main/resources/application.properties` for core settin
 
 ## Technologies Used
 
--   **Backend**: Java 21, Spring Boot 4.0.2
+-   **Backend**: Java 21, Spring Boot 4.1.0
 -   **Database**: MySQL, Flyway (Migrations)
 -   **Streaming**: OkHttp (SSE)
 -   **Authentication**: ScribeJava (OAuth2)
