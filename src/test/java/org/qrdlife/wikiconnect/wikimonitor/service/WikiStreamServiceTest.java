@@ -477,6 +477,22 @@ class WikiStreamServiceTest {
         }
 
         @Test
+        @DisplayName("records replay size 0 metric sample when cache is empty")
+        void emptyReplay_recordsZeroMetricSample() {
+            when(principal.getName()).thenReturn("alice");
+            when(userService.loadUserByUsername("alice")).thenReturn(testUser);
+            when(redisCache.rangeFromList("wikimonitor-test:sse:events"))
+                    .thenReturn(java.util.Collections.emptyList());
+
+            wikiStreamService.subscribe(principal, "evt-42");
+
+            io.micrometer.core.instrument.DistributionSummary summary = meterRegistry.find("wiki.replay.size").summary();
+            assertNotNull(summary);
+            assertEquals(1, summary.count());
+            assertEquals(0.0, summary.totalAmount());
+        }
+
+        @Test
         @DisplayName("anonymous client never triggers a replay")
         void anonymous_noReplay() {
             wikiStreamService.subscribe(null, "evt-42");

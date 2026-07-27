@@ -98,8 +98,8 @@ public class WikiStreamService {
                 .description("Total events received from Wikimedia stream")
                 .register(registry);
 
-        this.eventsMatched = Counter.builder("wiki.events.matched")
-                .description("Events matched at least one user filter")
+        this.eventsMatched = Counter.builder("wiki.events.matched.deliveries")
+                .description("Matched event deliveries to connected emitters")
                 .register(registry);
 
         this.eventProcessDuration = Timer.builder("wiki.event.process.duration")
@@ -121,7 +121,7 @@ public class WikiStreamService {
                 .register(registry);
 
         Gauge.builder("wiki.emitters.active", emitters, Map::size)
-                .description("Currently connected SSE clients")
+                .description("Currently connected authenticated registered emitters")
                 .register(registry);
 
         this.mapper = mapper;
@@ -419,6 +419,7 @@ public class WikiStreamService {
     private void replayMissedEvents(SseEmitter emitter, StreamContext context, String clientLastEventId) {
         List<JsonNode> entries = redisCache.rangeFromList(eventCacheKey);
         if (entries.isEmpty()) {
+            replaySize.record(0);
             return;
         }
         boolean found = false;
