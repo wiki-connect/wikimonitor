@@ -4,6 +4,12 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.DistributionSummary;
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
@@ -68,14 +74,56 @@ public class WikiStreamService {
     private volatile boolean shuttingDown = false;
     private volatile boolean heartbeatScheduled = false;
 
+    private final MeterRegistry registry;
+    private final Counter eventsReceived;
+    private final Counter eventsMatched;
+    private final Timer eventProcessDuration;
+    private final Timer cacheWriteDuration;
+    private final Timer broadcastDuration;
+    private final Counter streamReconnects;
+    private final DistributionSummary replaySize;
+
     public WikiStreamService(ObjectMapper mapper,
                              AbuseFilterService abuseFilter,
                              UserService userService,
                              RedisCache redisCache,
+                             MeterRegistry registry,
                              @Value("${sse.timeout.ms:1800000}") long sseTimeoutMs,
                              @Value("${sse.heartbeat.ms:15000}") long heartbeatMs,
                              @Value("${sse.event-cache.max-size:1000}") int eventCacheMaxSize,
                              @Value("${sse.redis.key-prefix:wikimonitor}") String redisKeyPrefix) {
+        this.registry = registry;
+
+        this.eventsReceived = Counter.builder("wiki.events.received")
+                .description("Total events received from Wikimedia stream")
+                .register(registry);
+
+        this.eventsMatched = Counter.builder("wiki.events.matched")
+                .description("Events matched at least one user filter")
+                .register(registry);
+
+        this.eventProcessDuration = Timer.builder("wiki.event.process.duration")
+                .description("Time from parse to broadcast dispatch")
+                .register(registry);
+
+        this.cacheWriteDuration = Timer.builder("wiki.cache.write.duration")
+                .register(registry);
+
+        this.broadcastDuration = Timer.builder("wiki.broadcast.duration")
+                .description("Per-emitter send duration")
+                .register(registry);
+
+        this.streamReconnects = Counter.builder("wiki.stream.reconnects")
+                .register(registry);
+
+        this.replaySize = DistributionSummary.builder("wiki.replay.size")
+                .description("Number of events replayed per reconnecting client")
+                .register(registry);
+
+        Gauge.builder("wiki.emitters.active", emitters, Map::size)
+                .description("Currently connected SSE clients")
+                .register(registry);
+
         this.mapper = mapper;
         this.abuseFilter = abuseFilter;
         this.userService = userService;
@@ -125,6 +173,7 @@ public class WikiStreamService {
                 if (shuttingDown) {
                     return;
                 }
+                eventsReceived.increment();
                 if (id != null) {
                     lastEventId = id;
                 }
@@ -134,6 +183,7 @@ public class WikiStreamService {
                         if (shuttingDown) {
                             return;
                         }
+                        Timer.Sample sample = Timer.start(registry);
                         try {
                             RecentChange rc = mapper.readValue(data, RecentChange.class);
                             // Cache before broadcasting so a client subscribing between the two ops finds the event.
@@ -141,6 +191,8 @@ public class WikiStreamService {
                             broadcastAsync(rc, currentId);
                         } catch (Exception e) {
                             log.error("Error processing event: {}", e.getMessage());
+                        } finally {
+                            sample.stop(eventProcessDuration);
                         }
                     });
                 } catch (RejectedExecutionException ignored) {
@@ -172,6 +224,7 @@ public class WikiStreamService {
         if (shuttingDown || scheduler.isShutdown()) {
             return;
         }
+        streamReconnects.increment();
         try {
             scheduler.schedule(this::startStream, 5, TimeUnit.SECONDS);
         } catch (RejectedExecutionException e) {
@@ -226,10 +279,15 @@ public class WikiStreamService {
         if (shuttingDown || id == null) {
             return;
         }
-        ObjectNode node = mapper.createObjectNode();
-        node.put("id", id);
-        node.set("data", mapper.valueToTree(rc));
-        redisCache.appendToList(eventCacheKey, node, eventCacheMaxSize);
+        Timer.Sample sample = Timer.start(registry);
+        try {
+            ObjectNode node = mapper.createObjectNode();
+            node.put("id", id);
+            node.set("data", mapper.valueToTree(rc));
+            redisCache.appendToList(eventCacheKey, node, eventCacheMaxSize);
+        } finally {
+            sample.stop(cacheWriteDuration);
+        }
     }
 
     private void broadcastAsync(RecentChange rc, String eventId) {
@@ -242,6 +300,7 @@ public class WikiStreamService {
 
             try {
                 executor.execute(() -> {
+                    Timer.Sample sample = Timer.start(registry);
                     try {
                         // While replay is in progress, queue live events for drainPendingEvents().
                         synchronized (context) {
@@ -261,6 +320,8 @@ public class WikiStreamService {
                         log.error("Unexpected error while broadcasting", e);
                         emitter.completeWithError(e);
                         emitters.remove(emitter);
+                    } finally {
+                        sample.stop(broadcastDuration);
                     }
                 });
             } catch (RejectedExecutionException ignored) {
@@ -275,6 +336,7 @@ public class WikiStreamService {
         if (matchedFilters.isEmpty()) {
             return;
         }
+        eventsMatched.increment();
         StreamEventDTO dto = StreamEventDTO.fromRecentChange(rc, matchedFilters);
         String userPayload = mapper.writeValueAsString(dto);
 
@@ -383,11 +445,13 @@ public class WikiStreamService {
                         context.user.getUsername(), e.getMessage());
                 emitter.complete();
                 emitters.remove(emitter);
+                replaySize.record(replayed);
                 return;
             } catch (Exception e) {
                 log.warn("Skipping malformed replay entry: {}", e.getMessage());
             }
         }
+        replaySize.record(replayed);
         if (!found) {
             log.warn("Last-Event-ID [{}] not found in cache for user {}; gap in coverage possible",
                     clientLastEventId, context.user.getUsername());
