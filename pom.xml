@@ -21,7 +21,7 @@
 
     <properties>
         <java.version>21</java.version>
-        <jsoup.version>1.22.2</jsoup.version>
+        <jsoup.version>1.23.1</jsoup.version>
         <!-- External versions not managed by Spring Boot -->
         <scribejava.version>8.3.3</scribejava.version>
         <okhttp.version>5.4.0</okhttp.version>
