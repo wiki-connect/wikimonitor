@@ -2,6 +2,10 @@ package org.qrdlife.wikiconnect.wikimonitor.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -49,6 +53,7 @@ class WikiStreamServiceTest {
     @Mock
     private Principal principal;
 
+    private MeterRegistry meterRegistry;
     // ── SUT ───────────────────────────────────────────────────────────────────
     private WikiStreamService wikiStreamService;
 
@@ -58,9 +63,10 @@ class WikiStreamServiceTest {
 
     @BeforeEach
     void setUp() {
+        meterRegistry = new SimpleMeterRegistry();
         MockitoAnnotations.openMocks(this);
         wikiStreamService = new WikiStreamService(
-                mapper, abuseFilter, userService, redisCache,
+                mapper, abuseFilter, userService, redisCache,meterRegistry,
                 1_800_000L, 15_000L, 1000, "wikimonitor-test");
 
         testUser = new User();
@@ -468,6 +474,22 @@ class WikiStreamServiceTest {
             wikiStreamService.subscribe(principal, "evt-42");
 
             verify(redisCache, times(1)).rangeFromList("wikimonitor-test:sse:events");
+        }
+
+        @Test
+        @DisplayName("records replay size 0 metric sample when cache is empty")
+        void emptyReplay_recordsZeroMetricSample() {
+            when(principal.getName()).thenReturn("alice");
+            when(userService.loadUserByUsername("alice")).thenReturn(testUser);
+            when(redisCache.rangeFromList("wikimonitor-test:sse:events"))
+                    .thenReturn(java.util.Collections.emptyList());
+
+            wikiStreamService.subscribe(principal, "evt-42");
+
+            io.micrometer.core.instrument.DistributionSummary summary = meterRegistry.find("wiki.replay.size").summary();
+            assertNotNull(summary);
+            assertEquals(1, summary.count());
+            assertEquals(0.0, summary.totalAmount());
         }
 
         @Test
