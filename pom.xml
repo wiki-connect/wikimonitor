@@ -15,7 +15,7 @@
 
     <groupId>org.qrdlife.wikiconnect</groupId>
     <artifactId>wikimonitor</artifactId>
-    <version>1.6.1</version>
+    <version>1.6.2</version>
     <name>wikimonitor</name>
     <description>Wikimedia Monitor &amp; Abuse Filter</description>
 
