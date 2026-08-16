@@ -95,7 +95,7 @@
         <dependency>
             <groupId>org.qrdlife.wikiconnect</groupId>
             <artifactId>MediaWiki4J</artifactId>
-            <version>1.2.3</version>
+            <version>1.2.4</version>
         </dependency>
 
         <!-- OAuth -->
