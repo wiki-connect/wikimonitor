@@ -24,7 +24,7 @@
         <jsoup.version>1.23.1</jsoup.version>
         <!-- External versions not managed by Spring Boot -->
         <scribejava.version>8.3.3</scribejava.version>
-        <okhttp.version>5.4.0</okhttp.version>
+        <okhttp.version>5.5.0</okhttp.version>
         <diffutils.version>4.17</diffutils.version>
         <mockito.inline.version>5.2.0</mockito.inline.version>
     </properties>
