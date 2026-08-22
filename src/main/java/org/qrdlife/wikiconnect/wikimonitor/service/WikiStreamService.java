@@ -90,6 +90,7 @@ public class WikiStreamService {
                              MeterRegistry registry,
                              @Value("${sse.timeout.ms:1800000}") long sseTimeoutMs,
                              @Value("${sse.heartbeat.ms:15000}") long heartbeatMs,
+                             @Value("${sse.upstream.timeout.ms:60000}") long upstreamTimeoutMs,
                              @Value("${sse.event-cache.max-size:1000}") int eventCacheMaxSize,
                              @Value("${sse.redis.key-prefix:wikimonitor}") String redisKeyPrefix) {
         this.registry = registry;
@@ -133,7 +134,7 @@ public class WikiStreamService {
         this.eventCacheMaxSize = eventCacheMaxSize;
         this.eventCacheKey = redisKeyPrefix + EVENT_CACHE_KEY_SUFFIX;
         this.client = new OkHttpClient.Builder()
-                .readTimeout(0, TimeUnit.SECONDS) // No timeout for SSE
+                .readTimeout(upstreamTimeoutMs, TimeUnit.MILLISECONDS)
                 .build();
     }
 
