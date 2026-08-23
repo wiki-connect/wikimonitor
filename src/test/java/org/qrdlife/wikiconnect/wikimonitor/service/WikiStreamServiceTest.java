@@ -67,7 +67,7 @@ class WikiStreamServiceTest {
         MockitoAnnotations.openMocks(this);
         wikiStreamService = new WikiStreamService(
                 mapper, abuseFilter, userService, redisCache,meterRegistry,
-                1_800_000L, 15_000L, 1000, "wikimonitor-test");
+                1_800_000L, 15_000L, 60_000L, 1000, "wikimonitor-test");
 
         testUser = new User();
         testUser.setId(1L);

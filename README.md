@@ -65,6 +65,7 @@ WikiMonitor is a comprehensive tool designed to monitor Wikimedia's RecentChange
     | `MEDIAWIKI_CLIENT_SECRET` | OAuth2 client secret |
     | `REQUIRE_ROLLBACK_RIGHT` | Set to `false` to bypass rollback rights check during local testing (default: `true`) |
     | `SSE_TIMEOUT_MS` | Per-client SSE connection timeout in milliseconds (default: `1800000`, i.e. 30 minutes). On timeout the browser auto-reconnects with `Last-Event-ID` and the server replays missed events. |
+    | `SSE_UPSTREAM_TIMEOUT_MS` | Idle read timeout in milliseconds for the upstream connection to Wikimedia's EventStreams endpoint. If no data (including heartbeat/comment lines) arrives within this window, the connection is treated as failed and a reconnect is triggered automatically (default: `60000`, i.e. 60 seconds). |
     | `SSE_EVENT_CACHE_MAX_SIZE` | Max number of recent events kept in the Redis replay cache (default: `1000`) |
     | `SSE_REDIS_KEY_PREFIX` | Prefix for Redis keys to namespace per deployment (default: `wikimonitor`) |
     | `REDIS_HOST` | Redis host (default: `redis.svc.tools.eqiad1.wikimedia.cloud` — Toolforge shared Redis) |
