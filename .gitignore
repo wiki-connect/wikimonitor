@@ -53,3 +53,12 @@ wikimonitor.db
 # Logs
 # ======================
 logs/
+
+# ======================
+# Gemini CLI
+# ======================
+# gemini-cli settings
+.gemini/
+
+# GitHub App credentials
+gha-creds-*.json
